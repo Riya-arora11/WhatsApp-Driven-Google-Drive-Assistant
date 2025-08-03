@@ -1,7 +1,6 @@
 
 # WhatsApp‑Driven Google Drive Assistant (n8n Workflow)
 
-*Task 2 submission for the Internship challenge – deadline 10 Aug 2025*
 
 ---
 
@@ -61,7 +60,7 @@ Open http://localhost:5678 → *Workflows → Import* and pick `workflows/task2_
 
 ### 6 . Link Twilio ↔️ n8n
 Copy the **Production URL** shown under *Webhook1* node → set it as the **WHEN A MESSAGE COMES IN** URL in Twilio Sandbox settings.
-
+## Make sure to replace the placeholder Twilio SID (ACXXXXXXXXXXXXXXXXXXXXXXXXXXXX) with your actual SID. The workflow fails to receive messages otherwise.
 Done! Send e.g. `list Notes` to your Sandbox chat.
 
 ## 🛠️ Repo layout
