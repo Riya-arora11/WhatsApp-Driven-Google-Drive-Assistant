@@ -1,0 +1,1229 @@
+{
+  "name": "correctworkflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "twilio-inbound",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "9051cc6e-74f2-4b5f-8f66-133b3d65c134",
+      "name": "Webhook1",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -464,
+        80
+      ],
+      "webhookId": "d2b84373-fa0e-4a35-aa20-7aface26a8f8"
+    },
+    {
+      "parameters": {
+        "functionCode": "//------------------------------------------------------------------//\n// Parse WhatsApp command – now with DELETE                          //\n//------------------------------------------------------------------//\nconst raw   = $json.body?.Body || \"\";\nconst input = raw.trim().toLowerCase().replace(/\\s+/g,\" \");\n\nconst parts     = input.split(\" \");\nconst command   = parts.shift();\nconst remainder = parts.join(\" \");\n\nconst allowed = [\"list\",\"summarize\",\"summarise\",\"move\",\"delete\"];\nif (!allowed.includes(command) || !remainder) {\n  return [{\n    json:{\n      error:true,\n      body:`❌ Invalid command.\n\n• list <folder>\n• summarize <folder>/<file>\n• move <srcFolder>/<file> <destFolder>\n• delete <folder>\n• delete <folder>/<file>`\n    }\n  }];\n}\n\nconst cmd = command===\"summarise\" ? \"summarize\" : command;\nlet out   = { command:cmd, original:input, from:$json.body?.From||\"\" };\n\n//──────────────────────────────────────────────────────── list\nif (cmd===\"list\") {\n  out.folder = remainder;\n}\n\n//──────────────────────────────────────────── summarize / delete\nelse if ([\"summarize\",\"delete\"].includes(cmd)) {\n  if (!remainder.includes(\"/\")) {               // just a folder\n    if (cmd===\"summarize\")\n      return [{json:{error:true,body:\"❌ summarize needs folder/file\"}}];\n\n    // delete <folder>\n    out.folder = remainder;                     // remove whole folder\n  } else {                                      // folder + file\n    const [folder,...fileArr] = remainder.split(\"/\");\n    out.srcFolder = folder;                     // for delete\n    out.folder    = folder;                     // for summarize\n    out.file      = fileArr.join(\"/\");\n  }\n}\n\n//────────────────────────────────────────────────────────── move\nelse if (cmd===\"move\") {\n  const m = remainder.match(/^(\\S+\\/\\S+)\\s+(\\S+)$/);\n  if (!m)\n    return [{json:{error:true,\n                   body:\"❌ move <srcFolder>/<file> <destFolder>\"}}];\n  const [ , srcPath , destFolder ] = m;\n  const [srcFolder,...fileArr] = srcPath.split(\"/\");\n  out.srcFolder  = srcFolder;\n  out.file       = fileArr.join(\"/\");\n  out.destFolder = destFolder;\n}\n\nreturn [{json:out}];"
+      },
+      "id": "28547c6b-d941-4ab1-9cc3-e3728b236b7d",
+      "name": "Parse Command1",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -304,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const allItems = $items();\nconst allFiles = allItems.flatMap(item => (item.json.files || []));\nconst fileList = allFiles.map(file => file.name);\nconst files = fileList.join('\\n');\nconst message = fileList.length\n  ? `📁 Files in folder:\\n${files}`\n  : `⚠️ No files found in that folder.`;\nreturn [{ json: { body: message, to: $json[\"from\"] } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        0
+      ],
+      "id": "da63617c-2f23-49ec-93f6-1c75640759ea",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/<ADD YOUR TWILIO SID>/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "To",
+              "value": "={{ $node[\"Webhook1\"].json[\"body\"][\"From\"] }}"
+            },
+            {
+              "name": "From",
+              "value": "whatsapp:+14155238886"
+            },
+            {
+              "name": "Body",
+              "value": "={{ $json.body }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        496,
+        0
+      ],
+      "id": "ac91287b-6eba-4476-ac7e-509958172d51",
+      "name": "listrequest2",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "AYsq41MwlCvzyazb",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "queryString": "={{$json.folder}}",
+        "filter": {
+          "whatToSearch": "folders"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "6dd42195-1aea-4ddf-bec6-62655560a30b",
+      "name": "listfoldersearch",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "Hw1OmZ0QN9Xkasvo",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ \"'\" + $json.id + \"' in parents\" }}"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name,mimeType,webViewLink)"
+            },
+            {
+              "name": "spaces",
+              "value": "drive"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        160,
+        0
+      ],
+      "id": "5e06984e-c5d4-4b39-bd86-7fee624a74ed",
+      "name": "listrequest",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "Hw1OmZ0QN9Xkasvo",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.command }}",
+                    "rightValue": "list",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "f198f800-6a56-4663-8449-bd373f17ceb8"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "967457f5-c6a1-4acf-8002-6d94b7d261b6",
+                    "leftValue": "={{ $json.command }}",
+                    "rightValue": "summarize",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "a93e1137-1969-4bc1-a7bf-93ecf1d57d67",
+                    "leftValue": "={{ $json.command }}",
+                    "rightValue": "move",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "c7e1e564-e052-4668-914b-75b00d572df2",
+                    "leftValue": "={{ $json.command }}",
+                    "rightValue": "delete",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -176,
+        96
+      ],
+      "id": "ff4ae1e4-ff98-42ad-a520-a8003227529a",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "queryString": "={{ $json.folder }}",
+        "returnAll": true,
+        "filter": {},
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        112,
+        144
+      ],
+      "id": "a2b4aae9-8e9d-487d-b2dc-4a7657bddd08",
+      "name": "summarisefilesearch",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "Hw1OmZ0QN9Xkasvo",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Code node  – Run once for all items\nconst item = items[0];               // first (only) input item\nconst binWrapper = item.binary;      // e.g. { data: { … } }\n\n// grab the first key inside `binary`\nconst key = Object.keys(binWrapper)[0];   // \"data\"\nconst binFile = binWrapper[key];          // { data, mimeType, fileName… }\n\nif (!binFile || !binFile.data) {\n  throw new Error('No base-64 payload found');\n}\n\nconst text = Buffer.from(binFile.data, 'base64').toString('utf8');\n\n// ── do whatever you need with the text ──\nconst summary =\n  text.split(/\\s+/).slice(0, 40).join(' ') + ' …';\n\nreturn [\n  {\n    json: {\n      fileName: binFile.fileName,\n      text,\n      summary,\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        128
+      ],
+      "id": "fa95eae5-8f40-47df-bb8f-b20f15250491",
+      "name": "summarycode"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-3.5-turbo",
+          "mode": "id"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Summarize the following text in bullet points: \n\n\n{{ $json.text }}\n"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        1200,
+        128
+      ],
+      "id": "231938d0-0dc7-465b-ada0-8a0c88bd1026",
+      "name": "Message a model",
+      "credentials": {
+        "openAiApi": {
+          "id": "TjCzlwxMHqoy5Krq",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/<ADD YOUR TWILIO SID>/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "To",
+              "value": "={{ $node[\"Webhook1\"].json[\"body\"][\"From\"] }}"
+            },
+            {
+              "name": "From",
+              "value": "whatsapp:+14155238886"
+            },
+            {
+              "name": "Body",
+              "value": "={{ $json.message.content }}\n"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1552,
+        128
+      ],
+      "id": "7393f25f-f125-4e0e-b421-aa0ccfd8ccce",
+      "name": "summaryrequest2",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "AYsq41MwlCvzyazb",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://www.googleapis.com/drive/v3/files/{{$json.id}}?alt=media&supportsAllDrives=true",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        784,
+        144
+      ],
+      "id": "5954e798-490c-42b3-a04c-debd8d092fb7",
+      "name": "summaryrequest",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "AYsq41MwlCvzyazb",
+          "name": "Unnamed credential"
+        },
+        "googleDriveOAuth2Api": {
+          "id": "Hw1OmZ0QN9Xkasvo",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "queryString": "={{$json[\"fileName\"]}}",
+        "returnAll": true,
+        "filter": {
+          "folderId": {
+            "__rl": true,
+            "value": "={{ $json.id }}",
+            "mode": "id"
+          },
+          "whatToSearch": "files"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        592,
+        144
+      ],
+      "id": "90d52db0-9657-4a6c-aafc-2a10413e9032",
+      "name": "summarisefoldersearch",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "Hw1OmZ0QN9Xkasvo",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "8f25f3c4-6642-4061-8f14-4855257c53b8",
+              "name": "fileName",
+              "value": "={{$node[\"Switch\"].json[\"file\"]}}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        336,
+        144
+      ],
+      "id": "817d6152-aa5e-480b-bb83-0e982c5d2534",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "queryString": "={{ $json.srcFolder}}",
+        "returnAll": true,
+        "filter": {
+          "whatToSearch": "folders"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -64,
+        432
+      ],
+      "id": "091184ff-db3c-4b30-8929-e35df47da6e6",
+      "name": "source",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "Hw1OmZ0QN9Xkasvo",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "queryString": "={{$node[\"Switch\"].json.destFolder}}",
+        "returnAll": true,
+        "filter": {
+          "whatToSearch": "folders"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        320,
+        448
+      ],
+      "id": "6b240231-4234-4211-b3d9-3ecfe1a5e999",
+      "name": "destination",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "Hw1OmZ0QN9Xkasvo",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "queryString": "={{ $node[\"Switch\"].json.file }}",
+        "filter": {
+          "folderId": {
+            "__rl": true,
+            "value": "={{$items(\"source\")[0].json.id}}",
+            "mode": "id"
+          }
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        512,
+        400
+      ],
+      "id": "22d2e72d-e75e-40b1-a34d-c6d4b116b215",
+      "name": "movefilesearch",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "Hw1OmZ0QN9Xkasvo",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://www.googleapis.com/drive/v3/files/{{ $items(\"movefilesearch\")[0].json.id.trim() }}\n?addParents={{ $items(\"destination\")[0].json.id.trim() }}\n&removeParents={{ $items(\"source\")[0].json.id.trim() }}\n&supportsAllDrives=true\n",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        736,
+        448
+      ],
+      "id": "87c1259c-06d8-4507-9930-25b727c254ba",
+      "name": "moverequest1",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "Hw1OmZ0QN9Xkasvo",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/<ADD YOUR TWILIO SID>/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "To",
+              "value": "={{ $node[\"Webhook1\"].json[\"body\"][\"From\"] }}"
+            },
+            {
+              "name": "From",
+              "value": "whatsapp:+14155238886"
+            },
+            {
+              "name": "Body",
+              "value": "={{ $json.body }}\n"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1440,
+        416
+      ],
+      "id": "5f915495-091a-4474-bce6-3bff318e6f3b",
+      "name": "moverequest2",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "AYsq41MwlCvzyazb",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "4dc2f658-cfe1-4166-8e6b-94ef0eefcafa",
+              "name": "fileName",
+              "value": "={{$node[\"Switch\"].json[\"file\"]}}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        208,
+        448
+      ],
+      "id": "370542e9-0ae8-4fc2-801f-e90b932a31c2",
+      "name": "setmove"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        288,
+        656
+      ],
+      "id": "27f22d7a-f207-478e-a542-b6567aed9eac",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Code node – Run once for all items\nconst fileName = $items(\"movefilesearch\")[0].json.name || $json.file;\nconst dest     = $json.dest || $json.destFolder || \"destination\";\n\nreturn [{\n  json: {\n    body: `✅ Moved *${fileName}* to *${dest}*`,\n    to:   $json.from\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        944,
+        448
+      ],
+      "id": "7578fd03-cb66-48b5-8683-9cbe22efa42f",
+      "name": "movecode"
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "queryString": "=={{ $json.srcFolder ?? $json.folder }}",
+        "limit": 1,
+        "filter": {},
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -240,
+        816
+      ],
+      "id": "81ebb963-af39-4b8d-863d-c2e1a273ae44",
+      "name": "deletefoldersearch",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "Hw1OmZ0QN9Xkasvo",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "queryString": "={{ $node[\"Switch\"].json.file }}",
+        "limit": 1,
+        "filter": {
+          "whatToSearch": "files"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        432,
+        832
+      ],
+      "id": "0393bc7e-3704-4866-b2bb-9834c3417854",
+      "name": "deletefilesearch",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "Hw1OmZ0QN9Xkasvo",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://www.googleapis.com/drive/v3/files/{{ $items(\"deletefilesearch\")[0].json.id.trim() }}?supportsAllDrives=true",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "JSON",
+        "body": "{ \"trashed\": true }",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        976,
+        864
+      ],
+      "id": "6facad28-7a5b-40b7-b3ca-06af142e6e0e",
+      "name": "deletefilerequesthttp",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "AYsq41MwlCvzyazb",
+          "name": "Unnamed credential"
+        },
+        "googleDriveOAuth2Api": {
+          "id": "Hw1OmZ0QN9Xkasvo",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "aa3a0002-f6fb-4790-97fc-e76e7a2809b7",
+              "leftValue": "={{ $node[\"Switch\"].json.file ? true : false }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -16,
+        880
+      ],
+      "id": "cd8718b4-8f6b-49c9-b67b-5f3bfd8d620a",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    body: `🗑️  Deleted *${$items(\"deletefilesearch\")[0].json.name}* successfully.`,\n    to:   $node[\"Parse Command1\"].json.from\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1312,
+        832
+      ],
+      "id": "4b563e62-920f-4a41-86a1-5d99deeb8e91",
+      "name": "deletefilecode"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/<ADD YOUR TWILIO SID>/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "To",
+              "value": "={{ $node[\"Webhook1\"].json[\"body\"][\"From\"] }}"
+            },
+            {
+              "name": "From",
+              "value": "whatsapp:+14155238886"
+            },
+            {
+              "name": "Body",
+              "value": "={{ $json.body }}\n"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1776,
+        944
+      ],
+      "id": "9febfdde-a97b-48c5-83b1-2cdac05f6139",
+      "name": "finaldeleterequest",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "AYsq41MwlCvzyazb",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://www.googleapis.com/drive/v3/files/{{ $items(\"deletefoldersearch\")[0].json.id.trim() }}?supportsAllDrives=true",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "JSON",
+        "body": "{ \"trashed\": true }",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        464,
+        1056
+      ],
+      "id": "8a62dad8-8ab0-419b-a260-f6ac01d2a06c",
+      "name": "deletefolderhttprequest",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "AYsq41MwlCvzyazb",
+          "name": "Unnamed credential"
+        },
+        "googleDriveOAuth2Api": {
+          "id": "Hw1OmZ0QN9Xkasvo",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    body: `🗑️  Deleted *${$items(\"deletefoldersearch\")[0].json.name}* successfully.`,\n    to:   $node[\"Parse Command1\"].json.from\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        1104
+      ],
+      "id": "ef285d4c-b353-48a4-b21d-526e132e144f",
+      "name": "deletefoldercode"
+    }
+  ],
+  "pinData": {
+    "Parse Command1": [
+      {
+        "json": {
+          "name": "First item",
+          "code": 1
+        }
+      },
+      {
+        "json": {
+          "name": "Second item",
+          "code": 2
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook1": {
+      "main": [
+        [
+          {
+            "node": "Parse Command1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Command1": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "listrequest2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "listfoldersearch": {
+      "main": [
+        [
+          {
+            "node": "listrequest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "listrequest": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "listfoldersearch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "summarisefilesearch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "source",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "deletefoldersearch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "summarisefilesearch": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "summarycode": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "summaryrequest2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "summaryrequest": {
+      "main": [
+        [
+          {
+            "node": "summarycode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "summarisefoldersearch": {
+      "main": [
+        [
+          {
+            "node": "summaryrequest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "summarisefoldersearch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "source": {
+      "main": [
+        [
+          {
+            "node": "setmove",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "destination": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "movefilesearch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "movefilesearch": {
+      "main": [
+        [
+          {
+            "node": "moverequest1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "moverequest1": {
+      "main": [
+        [
+          {
+            "node": "movecode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "setmove": {
+      "main": [
+        [
+          {
+            "node": "destination",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "moverequest1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "movecode": {
+      "main": [
+        [
+          {
+            "node": "moverequest2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "deletefoldersearch": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "deletefilesearch": {
+      "main": [
+        [
+          {
+            "node": "deletefilerequesthttp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "deletefilesearch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "deletefolderhttprequest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "deletefilerequesthttp": {
+      "main": [
+        [
+          {
+            "node": "deletefilecode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "deletefilecode": {
+      "main": [
+        [
+          {
+            "node": "finaldeleterequest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "deletefolderhttprequest": {
+      "main": [
+        [
+          {
+            "node": "deletefoldercode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "deletefoldercode": {
+      "main": [
+        [
+          {
+            "node": "finaldeleterequest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a9e8e46f-e151-412f-889b-574741aa530e",
+  "meta": {
+    "instanceId": "19c262abccd30fe1132311e829bf6e8e7901381fa868bd0d637e1c0bded63043"
+  },
+  "id": "0UvbTGKkqWXbjXoq",
+  "tags": []
+}
